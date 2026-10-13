@@ -7,8 +7,8 @@ et corrélées dans Wazuh. L'objectif est de documenter le cycle complet
 **attaque → détection → analyse**, sur l'infrastructure pfSense déjà
 segmentée du lab précédent.
 
-➡️ Ce lab s'appuie sur [`pfsense-suricata-lab`](lien-vers-ton-premier-dépôt)
-et [`wazuh-siem-lab`](lien-vers-ton-deuxième-dépôt), qui détaillent la mise en
+➡️ Ce lab s'appuie sur [`pfsense-suricata-lab`](https://github.com/alexbzz/network-security-lab)
+et [`wazuh-siem-lab`](https://github.com/alexbzz/wazuh-siem-lab), qui détaillent la mise en
 place de la segmentation réseau, de Suricata et du SIEM.
 
 ## 🎯 Objectif
