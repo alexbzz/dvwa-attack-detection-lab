@@ -100,12 +100,47 @@ pattern detected` (source `192.168.1.103`, destination `192.168.2.10:80`).
 ![Règle injection SQL](screenshots/03s-rules-pfsense-sqli.png)
 
 ### 4. Brute force
-*(à faire)* Attaque par dictionnaire sur le formulaire de connexion DVWA avec
-Hydra.
+Attaque par dictionnaire sur le formulaire de connexion DVWA avec Hydra.
+
+**Attaque** : récupération d'un `PHPSESSID` valide (avec `security=low`),
+puis lancement de Hydra contre `/vulnerabilities/brute/` avec le login fixe
+`admin` et le dictionnaire `rockyou.txt` :
+
+```
+hydra -l admin -P /usr/share/wordlists/rockyou.txt 192.168.2.10 http-get-form "/vulnerabilities/brute/:username=^USER^&password=^PASS^&Login=Login:H=Cookie: PHPSESSID=<session>; security=low:F=Username and/or password incorrect."
+```
+
+Le mot de passe `password` a été trouvé en quelques secondes (`admin` /
+`password`, l'un des comptes par défaut de DVWA). La rapidité s'explique par
+l'absence totale de limitation de tentatives au niveau **Low** (pas de
+délai, pas de blocage après échecs répétés), ce qui laisse Hydra enchaîner
+des centaines de requêtes par seconde.
+
+**Détection** : comme pour l'injection SQL, les règles ET Open par défaut
+n'ont rien détecté — un brute force se caractérise par un **volume de
+requêtes répétées** vers la même URL plutôt que par un contenu malveillant
+dans une seule requête, ce que les signatures génériques ne couvrent pas
+sans règle de seuil dédiée. Une **règle Suricata personnalisée avec
+`threshold`** a donc été écrite :
+
+```
+alert http any any -> any any (msg:"CUSTOM Brute Force - Multiple login attempts on DVWA"; flow:to_server,established; http.uri; content:"/vulnerabilities/brute/"; nocase; threshold:type threshold, track by_src, count 10, seconds 5; classtype:web-application-attack; sid:9000002; rev:1;)
+```
+
+Cette règle ne déclenche une alerte que si la **même source** envoie **10
+requêtes ou plus en 5 secondes** vers l'URL de brute force, ce qui évite le
+bruit sur du trafic normal et ne réagit qu'à un vrai pattern d'attaque.
+Après ajout de la règle et redémarrage de l'instance Suricata sur LAN,
+l'attaque rejouée a déclenché plusieurs alertes `CUSTOM Brute Force -
+Multiple login attempts on DVWA`, correctement corrélées dans Wazuh (source
+`192.168.1.103`, destination `192.168.2.10:80`, classification "Web
+Application Attack").
 
 ![Commande Hydra](screenshots/04-attack-bruteforce.png)
 ![Alerte Suricata brute force](screenshots/04b-suricata-alert-bruteforce.png)
 ![Corrélation Wazuh brute force](screenshots/04c-wazuh-bruteforce.png)
+![Règle brute force](screenshots/04s-rules-pfsense-brute-force.png)
+
 
 ### 5. Cross-Site Scripting (XSS)
 *(à faire)* Injection d'un script dans un champ non filtré, exécuté côté
@@ -141,7 +176,7 @@ l'effet des protections applicatives sur la détection réseau.
 | Test | Attendu | Résultat |
 |------|---------|----------|
 | SQL Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
-| Brute force détecté | Alerte Suricata + Wazuh | ⬜ |
+| Brute force détecté | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | XSS détecté | Alerte Suricata + Wazuh | ⬜ |
 | Command Injection détectée | Alerte Suricata + Wazuh | ⬜ |
 | Corrélation complète dans Wazuh | Source, IP attaquante, signature visibles | ⬜ |
@@ -165,6 +200,11 @@ l'effet des protections applicatives sur la détection réseau.
   `emerging-sql.rules` et `emerging-web_specific_apps.rules` étaient
   activées mais ne couvraient pas un payload aussi simple que
   `' OR '1'='1`. Écriture d'une règle personnalisée (voir scénario 3).
+- **Aucune détection par défaut du brute force** : même constat que pour le
+  SQLi — les règles ET Open ne couvrent pas un volume de requêtes répétées
+  vers une même URL. Nécessité d'une règle personnalisée avec `threshold`
+  pour ne déclencher qu'au-delà d'un nombre de tentatives sur une fenêtre de
+  temps donnée (voir scénario 4).
 
 ## 📚 Ce que j'ai appris
 
