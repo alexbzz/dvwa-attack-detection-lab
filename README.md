@@ -139,12 +139,29 @@ Application Attack").
 ![Commande Hydra](screenshots/04-attack-bruteforce.png)
 ![Alerte Suricata brute force](screenshots/04b-suricata-alert-bruteforce.png)
 ![Corrélation Wazuh brute force](screenshots/04c-wazuh-bruteforce.png)
-![Règle brute force](screenshots/04s-rules-pfsense-brute-force.png)
-
 
 ### 5. Cross-Site Scripting (XSS)
-*(à faire)* Injection d'un script dans un champ non filtré, exécuté côté
-client.
+Injection d'un script dans un champ non filtré (XSS Reflected), exécuté
+côté client.
+
+**Attaque** : soumission du payload `<script>alert('XSS')</script>` dans le
+champ "What's your name?". Le script injecté est exécuté par le navigateur
+au lieu d'être affiché comme texte, confirmant l'absence de filtrage/
+échappement des entrées utilisateur dans la page.
+
+**Détection** : même constat que pour les deux scénarios précédents — les
+règles ET Open par défaut n'ont déclenché aucune alerte sur ce payload. Une
+**règle Suricata personnalisée** a donc été écrite pour détecter l'injection
+d'une balise `<script>` dans une requête HTTP :
+
+```
+alert http any any -> any any (msg:"CUSTOM XSS - Script tag injection detected"; flow:to_server,established; http.uri; content:"<script"; nocase; classtype:web-application-attack; sid:9000003; rev:1;)
+```
+
+Cette règle recherche la chaîne `<script` dans l'URI de la requête (DVWA
+transmet le payload en GET, donc encodé dans l'URL), ce qui permet de
+capter toute tentative d'injection de balise `<script>` quel que soit son
+contenu.
 
 ![Payload XSS](screenshots/05-attack-xss.png)
 ![Alerte Suricata XSS](screenshots/05b-suricata-alert-xss.png)
@@ -205,6 +222,10 @@ l'effet des protections applicatives sur la détection réseau.
   vers une même URL. Nécessité d'une règle personnalisée avec `threshold`
   pour ne déclencher qu'au-delà d'un nombre de tentatives sur une fenêtre de
   temps donnée (voir scénario 4).
+- **Aucune détection par défaut du XSS** : même constat une troisième fois —
+  les règles ET Open ne couvrent pas un payload `<script>` simple sur un
+  champ GET basique de DVWA. Règle personnalisée écrite pour détecter
+  l'injection de balise `<script>` (voir scénario 5).
 
 ## 📚 Ce que j'ai appris
 
