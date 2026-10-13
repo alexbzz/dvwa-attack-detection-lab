@@ -50,12 +50,13 @@ documenter chaque scénario avec son trafic, son alerte et son analyse.
 | LAN | 192.168.1.0/24 | Serveur Wazuh | SIEM, corrélation |
 | DMZ | 192.168.2.0/24 | Debian + DVWA | Cible vulnérable |
 
-![Schéma réseau](screenshots/00-architecture.png)
-
 ## ⚙️ Mise en place
 
 ### 1. Installation de DVWA
-Apache, MariaDB, PHP, DVWA cloné depuis GitHub, base de données initialisée.
+Installation d'Apache, MariaDB et PHP sur la Debian en DMZ, DVWA cloné depuis
+GitHub, fichier `config/config.inc.php` renseigné (utilisateur dédié `dvwa`,
+mot de passe propre à l'utilisateur SQL — pas de compte root applicatif), et
+base de données initialisée via `setup.php`.
 
 ![Installation DVWA](screenshots/01-dvwa-install.png)
 ![Page de login DVWA](screenshots/01b-dvwa-login.png)
@@ -70,7 +71,28 @@ progressivement (Medium, High) pour comparer la détection.
 
 ### 3. Injection SQL
 Extraction de données via une requête SQL manipulée dans le champ de
-recherche utilisateur de DVWA.
+recherche utilisateur de DVWA (`User ID`).
+
+**Attaque** : soumission du payload `1' OR '1'='1` à la place d'un ID
+numérique. La clause `WHERE user_id = '...'` devient toujours vraie, ce qui
+fait remonter l'ensemble des utilisateurs de la base en une seule requête, au
+lieu d'un seul enregistrement.
+
+**Détection** : les catégories ET Open par défaut (`emerging-sql`,
+`emerging-web_specific_apps`), bien qu'activées sur l'interface LAN de
+Suricata, n'ont déclenché aucune alerte sur ce payload — les signatures
+génériques ciblent des patterns plus complexes (`UNION SELECT`,
+`information_schema`, CMS connus) qui ne couvrent pas une injection aussi
+simple sur un champ GET basique de DVWA. Une **règle Suricata personnalisée**
+a donc été écrite pour détecter ce pattern précis :
+
+```
+alert http any any -> any any (msg:"CUSTOM SQLi - OR 1=1 pattern detected"; flow:to_server,established; http.uri; content:"OR"; nocase; content:"1'='1"; nocase; distance:0; classtype:web-application-attack; sid:9000001; rev:1;)
+```
+
+Après ajout de cette règle sur l'interface LAN et redémarrage de l'instance
+Suricata, l'attaque rejouée a bien déclenché l'alerte `CUSTOM SQLi - OR 1=1
+pattern detected` (source `192.168.1.103`, destination `192.168.2.10:80`).
 
 ![Attaque SQLi](screenshots/03-attack-sqli.png)
 ![Alerte Suricata SQLi](screenshots/03b-suricata-alert-sqli.png)
@@ -78,21 +100,24 @@ recherche utilisateur de DVWA.
 ![Règle injection SQL](screenshots/03s-rules-pfsense-sqli.png)
 
 ### 4. Brute force
-Attaque par dictionnaire sur le formulaire de connexion DVWA avec Hydra.
+*(à faire)* Attaque par dictionnaire sur le formulaire de connexion DVWA avec
+Hydra.
 
 ![Commande Hydra](screenshots/04-attack-bruteforce.png)
 ![Alerte Suricata brute force](screenshots/04b-suricata-alert-bruteforce.png)
 ![Corrélation Wazuh brute force](screenshots/04c-wazuh-bruteforce.png)
 
 ### 5. Cross-Site Scripting (XSS)
-Injection d'un script dans un champ non filtré, exécuté côté client.
+*(à faire)* Injection d'un script dans un champ non filtré, exécuté côté
+client.
 
 ![Payload XSS](screenshots/05-attack-xss.png)
 ![Alerte Suricata XSS](screenshots/05b-suricata-alert-xss.png)
 ![Corrélation Wazuh XSS](screenshots/05c-wazuh-xss.png)
 
 ### 6. Injection de commandes
-Exécution de commandes système via le module Command Injection de DVWA.
+*(à faire)* Exécution de commandes système via le module Command Injection
+de DVWA.
 
 ![Attaque Command Injection](screenshots/06-attack-command-injection.png)
 ![Alerte Suricata Command Injection](screenshots/06b-suricata-alert-cmdi.png)
@@ -105,7 +130,7 @@ l'effet des protections applicatives sur la détection réseau.
 
 | Niveau | Attaque réussie | Détectée par Suricata |
 |--------|------------------|------------------------|
-| Low | ⬜ | ⬜ |
+| Low | ✅ | ✅ (règle custom) |
 | Medium | ⬜ | ⬜ |
 | High | ⬜ | ⬜ |
 
@@ -115,7 +140,7 @@ l'effet des protections applicatives sur la détection réseau.
 
 | Test | Attendu | Résultat |
 |------|---------|----------|
-| SQL Injection détectée | Alerte Suricata + Wazuh | ⬜ |
+| SQL Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | Brute force détecté | Alerte Suricata + Wazuh | ⬜ |
 | XSS détecté | Alerte Suricata + Wazuh | ⬜ |
 | Command Injection détectée | Alerte Suricata + Wazuh | ⬜ |
@@ -123,7 +148,23 @@ l'effet des protections applicatives sur la détection réseau.
 
 ## 🧩 Difficultés rencontrées
 
-*(à compléter au fil du lab)*
+- **Interface WireGuard résiduelle sur Kali (`kali`, 10.2.0.2/32)** : une
+  interface VPN WireGuard restée active (sans process visible dans `ps aux`)
+  forçait tout le trafic sortant de Kali à passer par le tunnel au lieu de
+  l'interface `eth0` du LAN. Le ping et le curl vers la DMZ échouaient tous
+  les deux en timeout silencieux, sans erreur explicite, alors que la route
+  par défaut (`ip route`) semblait correcte. Diagnostic confirmé via
+  `curl -v` (adresse source `10.2.0.2` au lieu de `192.168.1.103`) et `ip
+  addr`. Résolu en supprimant l'interface (`ip link delete kali`) et le
+  fichier de configuration associé (`/etc/wireguard/kali.conf`).
+- **Erreur de syntaxe SQL lors de la création de l'utilisateur `dvwa`** :
+  `ERROR 1064` suivi d'un `ERROR 1396 (Operation CREATE USER failed)` — un
+  utilisateur du même nom existait déjà d'une tentative précédente. Résolu
+  avec `DROP USER IF EXISTS` avant de recréer l'utilisateur.
+- **Règles Suricata par défaut insuffisantes pour l'injection SQL** :
+  `emerging-sql.rules` et `emerging-web_specific_apps.rules` étaient
+  activées mais ne couvraient pas un payload aussi simple que
+  `' OR '1'='1`. Écriture d'une règle personnalisée (voir scénario 3).
 
 ## 📚 Ce que j'ai appris
 
@@ -132,12 +173,18 @@ l'effet des protections applicatives sur la détection réseau.
 - Détection réseau d'attaques applicatives avec Suricata
 - Corrélation d'alertes multi-sources dans un SIEM
 - Effet du durcissement applicatif sur la détectabilité d'une attaque
+- Les signatures IDS génériques (ET Open) ne couvrent pas tous les cas :
+  écrire des règles personnalisées est parfois nécessaire pour des patterns
+  d'attaque simples mais spécifiques
+- Diagnostiquer un problème réseau méthodiquement, couche par couche
+  (ARP, routage, pare-feu, capture de paquets) pour isoler la véritable
+  cause d'une perte de connectivité
 
 ## 🚀 Pistes d'amélioration
 
 - Automatiser les scénarios avec des scripts (reproductibilité)
-- Ajouter des règles Suricata personnalisées pour les attaques non détectées
-  par défaut
+- Ajouter d'autres règles Suricata personnalisées pour les attaques non
+  détectées par défaut (brute force, XSS, command injection)
 - Comparer plusieurs outils d'attaque (sqlmap, Burp Suite, OWASP ZAP)
 - Documenter les faux positifs / faux négatifs rencontrés
 
