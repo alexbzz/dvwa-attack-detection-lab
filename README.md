@@ -227,7 +227,7 @@ l'effet des protections applicatives sur la détection réseau.
 |------|---------|----------|
 | SQL Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | Brute force détecté | Alerte Suricata + Wazuh | ✅ (via règle custom) |
-| XSS détecté | Alerte Suricata + Wazuh | ⬜ |
+| XSS détecté | Alerte Suricata + Wazuh | ✅ (via règle custom)  |
 | Command Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | Corrélation complète dans Wazuh | Source, IP attaquante, signature visibles | ⬜ |
 
