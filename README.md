@@ -75,6 +75,7 @@ recherche utilisateur de DVWA.
 ![Attaque SQLi](screenshots/03-attack-sqli.png)
 ![Alerte Suricata SQLi](screenshots/03b-suricata-alert-sqli.png)
 ![Corrélation Wazuh SQLi](screenshots/03c-wazuh-sqli.png)
+![Règle injection SQL](screenshots/03s-rules-pfsense-sqli.png)
 
 ### 4. Brute force
 Attaque par dictionnaire sur le formulaire de connexion DVWA avec Hydra.
