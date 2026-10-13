@@ -168,8 +168,41 @@ contenu.
 ![Corrélation Wazuh XSS](screenshots/05c-wazuh-xss.png)
 
 ### 6. Injection de commandes
-*(à faire)* Exécution de commandes système via le module Command Injection
-de DVWA.
+Exécution de commandes système via le module Command Injection de DVWA.
+
+**Attaque** : soumission du payload `127.0.0.1 ; ls` dans le champ attendant
+une adresse IP. L'application concatène la valeur directement dans une
+commande shell (`ping`) sans la filtrer, ce qui permet d'enchaîner une
+deuxième commande arbitraire (`ls`) après le `;`. Le résultat du `ping`
+s'affiche suivi du contenu listé par `ls`, confirmant l'exécution de la
+commande injectée côté serveur.
+
+**Détection — étape 1 (échec)** : une première règle inspectant `http.uri`
+(sur le modèle du scénario SQLi) n'a déclenché aucune alerte. Vérification
+via les outils de développement du navigateur (onglet Réseau) : contrairement
+aux scénarios précédents, ce module envoie les données en **POST**
+(`Content-Type: application/x-www-form-urlencoded`), donc le payload se
+trouve dans le **corps de la requête**, pas dans l'URL — une règle sur
+`http.uri` ne peut jamais le voir.
+
+**Détection — étape 2 (échec)** : une règle corrigée ciblant
+`http.request_body` avec les caractères en clair (`;`, `&&`, `|`) n'a
+toujours rien déclenché. Inspection du corps brut de la requête
+(`ip=127.0.0.1+%3B+ls&Submit=Submit`) : le navigateur encode automatiquement
+le `;` en `%3B` et les espaces en `+` avant l'envoi (encodage
+`application/x-www-form-urlencoded`) — Suricata ne voit donc jamais les
+caractères en clair sur le fil.
+
+**Détection — étape 3 (succès)** : règle simplifiée basée sur des
+`content` matches plutôt qu'une regex, ciblant directement la requête POST
+vers l'URL du module et la présence du séparateur encodé `%3B` :
+
+```
+alert http any any -> any any (msg:"CUSTOM Command Injection - Shell metacharacters detected"; flow:to_server,established; http.method; content:"POST"; http.uri; content:"/vulnerabilities/exec/"; http.request_body; content:"%3B"; nocase; classtype:web-application-attack; sid:9000004; rev:4;)
+```
+
+Après ajout de cette règle et redémarrage de l'instance Suricata, l'attaque
+rejouée a bien déclenché l'alerte.
 
 ![Attaque Command Injection](screenshots/06-attack-command-injection.png)
 ![Alerte Suricata Command Injection](screenshots/06b-suricata-alert-cmdi.png)
@@ -195,7 +228,7 @@ l'effet des protections applicatives sur la détection réseau.
 | SQL Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | Brute force détecté | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | XSS détecté | Alerte Suricata + Wazuh | ⬜ |
-| Command Injection détectée | Alerte Suricata + Wazuh | ⬜ |
+| Command Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | Corrélation complète dans Wazuh | Source, IP attaquante, signature visibles | ⬜ |
 
 ## 🧩 Difficultés rencontrées
@@ -226,6 +259,17 @@ l'effet des protections applicatives sur la détection réseau.
   les règles ET Open ne couvrent pas un payload `<script>` simple sur un
   champ GET basique de DVWA. Règle personnalisée écrite pour détecter
   l'injection de balise `<script>` (voir scénario 5).
+- **Command Injection : requête POST + encodage URL** : deux pièges combinés
+  ont fait échouer les deux premières règles. D'abord, contrairement aux
+  autres modules DVWA, Command Injection envoie les données en **POST** (pas
+  GET) — une règle inspectant `http.uri` ne peut donc rien voir ; il faut
+  cibler `http.request_body`. Ensuite, le navigateur **encode automatiquement**
+  les caractères spéciaux (`;` → `%3B`, espace → `+`) avant l'envoi en POST,
+  donc chercher les caractères en clair ne fonctionne pas non plus — il faut
+  chercher leur forme encodée. Diagnostic effectué via l'onglet Réseau des
+  outils de développement du navigateur (méthode HTTP, puis contenu exact du
+  corps de la requête). Voir scénario 6 pour le détail des trois itérations
+  de la règle.
 
 ## 📚 Ce que j'ai appris
 
@@ -240,6 +284,9 @@ l'effet des protections applicatives sur la détection réseau.
 - Diagnostiquer un problème réseau méthodiquement, couche par couche
   (ARP, routage, pare-feu, capture de paquets) pour isoler la véritable
   cause d'une perte de connectivité
+- Importance de vérifier la méthode HTTP réelle (GET/POST) et l'encodage
+  effectivement envoyé sur le réseau avant d'écrire une règle de détection,
+  plutôt que de supposer le format du payload
 
 ## 🚀 Pistes d'amélioration
 
