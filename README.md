@@ -71,12 +71,16 @@ progressivement (Medium, High) pour comparer la détection.
 
 ### 3. Injection SQL
 Extraction de données via une requête SQL manipulée dans le champ de
-recherche utilisateur de DVWA (`User ID`).
+recherche utilisateur de DVWA (`User ID`), testée sur les trois niveaux de
+sécurité pour observer l'effet du durcissement applicatif sur l'attaque et
+sur sa détection.
+
+#### Niveau Low
 
 **Attaque** : soumission du payload `1' OR '1'='1` à la place d'un ID
-numérique. La clause `WHERE user_id = '...'` devient toujours vraie, ce qui
-fait remonter l'ensemble des utilisateurs de la base en une seule requête, au
-lieu d'un seul enregistrement.
+numérique, en **GET**. La clause `WHERE user_id = '...'` devient toujours
+vraie, ce qui fait remonter l'ensemble des 5 utilisateurs de la base en une
+seule requête, au lieu d'un seul enregistrement.
 
 **Détection** : les catégories ET Open par défaut (`emerging-sql`,
 `emerging-web_specific_apps`), bien qu'activées sur l'interface LAN de
@@ -84,7 +88,7 @@ Suricata, n'ont déclenché aucune alerte sur ce payload — les signatures
 génériques ciblent des patterns plus complexes (`UNION SELECT`,
 `information_schema`, CMS connus) qui ne couvrent pas une injection aussi
 simple sur un champ GET basique de DVWA. Une **règle Suricata personnalisée**
-a donc été écrite pour détecter ce pattern précis :
+a donc été écrite pour détecter ce pattern précis dans l'URI :
 
 ```
 alert http any any -> any any (msg:"CUSTOM SQLi - OR 1=1 pattern detected"; flow:to_server,established; http.uri; content:"OR"; nocase; content:"1'='1"; nocase; distance:0; classtype:web-application-attack; sid:9000001; rev:1;)
@@ -98,6 +102,59 @@ pattern detected` (source `192.168.1.103`, destination `192.168.2.10:80`).
 ![Alerte Suricata SQLi](screenshots/03b-suricata-alert-sqli.png)
 ![Corrélation Wazuh SQLi](screenshots/03c-wazuh-sqli.png)
 ![Règle injection SQL](screenshots/03s-rules-pfsense-sqli.png)
+
+#### Niveau Medium
+
+**Attaque** : le champ texte libre est remplacé par un menu déroulant
+(`<select>`), et la requête passe désormais en **POST** (au lieu de GET
+pour Low). Le même type de payload sans quotes (`1 OR 1=1`), envoyé via
+une requête POST forgée (`curl`), a suffi à faire remonter les 5
+utilisateurs — le niveau Medium filtre les quotes mais pas les mots-clés
+SQL eux-mêmes.
+
+**Détection — échec puis correction** : la règle `sid:9000001` (basée sur
+`http.uri`) n'a rien détecté, pour deux raisons cumulées : (1) le payload
+est désormais dans le **corps POST**, invisible pour une règle qui
+inspecte l'URI ; (2) même en corrigeant la zone inspectée, le payload
+Medium ne contient pas la chaîne `1'='1` (avec quotes) que la règle Low
+recherchait, puisque les quotes ne sont plus utilisées. Plutôt que de
+complexifier une règle unique avec une expression régulière (tentative qui
+a échoué sans raison identifiée clairement), une **règle dédiée** a été
+écrite pour cette variante, basée sur `http.request_body` :
+
+```
+alert http any any -> any any (msg:"CUSTOM SQLi Medium - OR 1=1 pattern in POST body"; flow:to_server,established; http.method; content:"POST"; http.request_body; content:"OR"; nocase; content:"1=1"; nocase; distance:0; classtype:web-application-attack; sid:9000006; rev:1;)
+```
+
+![Attaque SQLi Medium](screenshots/03d-attack-sqli-medium.png)
+![Alerte Suricata SQLi Medium](screenshots/03e-suricata-alert-sqli-medium.png)
+![Corrélation Wazuh SQLi Medium](screenshots/03f-wazuh-sqli-medium.png)
+
+#### Niveau High
+
+**Attaque** : le champ de saisie classique est remplacé par un mécanisme de
+session dédié ("Session Input") : une popup permet de définir un ID stocké
+côté serveur, réutilisé ensuite par la page principale. Le même payload
+qu'au niveau Low (`1' OR '1'='1`) y a été soumis — l'injection **fonctionne
+toujours**, mais avec un impact réduit : la page n'affiche plus qu'un seul
+utilisateur (`admin`) au lieu des 5, suggérant une restriction du nombre de
+résultats (type `LIMIT`) côté application.
+
+**Détection — trois obstacles successifs** : (1) la popup soumet elle
+aussi en **POST**, donc la règle Low (`http.uri`) ne peut pas matcher ; (2)
+contrairement au test Medium réalisé via `curl` (qui envoyait le texte sans
+encodage), ce formulaire est soumis par un vrai navigateur, qui **encode
+automatiquement** les caractères spéciaux avant l'envoi — la quote `'`
+devient `%27`. Une règle cherchant `1'='1` en clair ne matche donc rien ; il
+a fallu chercher la forme encodée (`%27`) à la place. Règle finale :
+
+```
+alert http any any -> any any (msg:"CUSTOM SQLi High - OR 1=1 pattern in session-input POST"; flow:to_server,established; http.method; content:"POST"; http.uri; content:"session-input.php"; http.request_body; content:"%27"; content:"OR"; nocase; classtype:web-application-attack; sid:9000007; rev:2;)
+```
+
+![Attaque SQLi High](screenshots/03g-attack-sqli-high.png)
+![Alerte Suricata SQLi High](screenshots/03h-suricata-alert-sqli-high.png)
+![Corrélation Wazuh SQLi High](screenshots/03i-wazuh-sqli-high.png)
 
 ### 4. Brute force
 Attaque par dictionnaire sur le formulaire de connexion DVWA avec Hydra.
@@ -213,21 +270,27 @@ rejouée a bien déclenché l'alerte.
 Même attaque (SQLi) rejouée sur les trois niveaux DVWA, pour illustrer
 l'effet des protections applicatives sur la détection réseau.
 
-| Niveau | Attaque réussie | Détectée par Suricata |
-|--------|------------------|------------------------|
-| Low | ✅ | ✅ (règle custom) |
-| Medium | ⬜ | ⬜ |
-| High | ⬜ | ⬜ |
+| Niveau | Attaque réussie | Détectée par Suricata | Particularité |
+|--------|------------------|------------------------|----------------|
+| Low | ✅ (5 utilisateurs) | ✅ (règle custom, `http.uri`) | Requête GET, payload avec quotes |
+| Medium | ✅ (5 utilisateurs) | ✅ (règle custom dédiée, `http.request_body`) | Requête POST, payload sans quotes |
+| High | ✅ (1 seul utilisateur) | ✅ (règle custom dédiée, encodage `%27`) | POST via mécanisme de session, impact réduit, payload URL-encodé par le navigateur |
 
-![Comparaison des niveaux](screenshots/07-security-levels-comparison.png)
+![Sql medium Injection](screenshots/07-sql-med.png)
+![Sql medium Suricata](screenshots/07b-sql-med.png)
+![Sql medium Wazuh](screenshots/07c-sql-med.png)
+![Sql high Injection](screenshots/07d-sql-med.png)
+![Sql high suricata](screenshots/07e-sql-med.png)
+![Sql high wazuh](screenshots/07f-sql-med.png)
+
 
 ## ✅ Tests et résultats
 
 | Test | Attendu | Résultat |
 |------|---------|----------|
-| SQL Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
+| SQL Injection détectée | Alerte Suricata + Wazuh | ✅ (via règles custom, 3 niveaux Low/Medium/High) |
 | Brute force détecté | Alerte Suricata + Wazuh | ✅ (via règle custom) |
-| XSS détecté | Alerte Suricata + Wazuh | ✅ (via règle custom)  |
+| XSS détecté | Alerte Suricata + Wazuh | ⬜ |
 | Command Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | Corrélation complète dans Wazuh | Source, IP attaquante, signature visibles | ⬜ |
 
@@ -270,6 +333,17 @@ l'effet des protections applicatives sur la détection réseau.
   outils de développement du navigateur (méthode HTTP, puis contenu exact du
   corps de la requête). Voir scénario 6 pour le détail des trois itérations
   de la règle.
+- **SQLi Medium/High : chaque niveau a nécessité sa propre règle** : la
+  méthode HTTP change entre les niveaux (GET en Low, POST en Medium et
+  High), et le payload lui-même change (avec ou sans quotes selon le
+  filtrage applicatif). Une règle unique basée sur une expression régulière
+  (`pcre`) pour couvrir toutes les variantes a été tentée mais n'a pas
+  fonctionné (sans cause identifiée précisément) ; des règles séparées,
+  basées sur de simples `content` matches, se sont montrées plus simples à
+  écrire, à déboguer et à faire fonctionner de façon fiable. Au niveau
+  High, il a aussi fallu repérer que le navigateur encode les quotes en
+  `%27` dans le corps POST (vérifié via `tcpdump` sur la Debian), exactement
+  comme pour le Command Injection.
 
 ## 📚 Ce que j'ai appris
 
