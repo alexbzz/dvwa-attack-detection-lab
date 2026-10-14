@@ -276,13 +276,6 @@ l'effet des protections applicatives sur la détection réseau.
 | Medium | ✅ (5 utilisateurs) | ✅ (règle custom dédiée, `http.request_body`) | Requête POST, payload sans quotes |
 | High | ✅ (1 seul utilisateur) | ✅ (règle custom dédiée, encodage `%27`) | POST via mécanisme de session, impact réduit, payload URL-encodé par le navigateur |
 
-![Sql medium Injection](screenshots/07-sql-med.png)
-![Sql medium Suricata](screenshots/07b-sql-med.png)
-![Sql medium Wazuh](screenshots/07c-sql-med.png)
-![Sql high Injection](screenshots/07d-sql-med.png)
-![Sql high suricata](screenshots/07e-sql-med.png)
-![Sql high wazuh](screenshots/07f-sql-med.png)
-
 ## ✅ Tests et résultats
 
 | Test | Attendu | Résultat |
@@ -295,19 +288,6 @@ l'effet des protections applicatives sur la détection réseau.
 
 ## 🧩 Difficultés rencontrées
 
-- **Interface WireGuard résiduelle sur Kali (`kali`, 10.2.0.2/32)** : une
-  interface VPN WireGuard restée active (sans process visible dans `ps aux`)
-  forçait tout le trafic sortant de Kali à passer par le tunnel au lieu de
-  l'interface `eth0` du LAN. Le ping et le curl vers la DMZ échouaient tous
-  les deux en timeout silencieux, sans erreur explicite, alors que la route
-  par défaut (`ip route`) semblait correcte. Diagnostic confirmé via
-  `curl -v` (adresse source `10.2.0.2` au lieu de `192.168.1.103`) et `ip
-  addr`. Résolu en supprimant l'interface (`ip link delete kali`) et le
-  fichier de configuration associé (`/etc/wireguard/kali.conf`).
-- **Erreur de syntaxe SQL lors de la création de l'utilisateur `dvwa`** :
-  `ERROR 1064` suivi d'un `ERROR 1396 (Operation CREATE USER failed)` — un
-  utilisateur du même nom existait déjà d'une tentative précédente. Résolu
-  avec `DROP USER IF EXISTS` avant de recréer l'utilisateur.
 - **Règles Suricata par défaut insuffisantes pour l'injection SQL** :
   `emerging-sql.rules` et `emerging-web_specific_apps.rules` étaient
   activées mais ne couvraient pas un payload aussi simple que
