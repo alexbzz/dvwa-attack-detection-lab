@@ -283,16 +283,15 @@ l'effet des protections applicatives sur la détection réseau.
 ![Sql high suricata](screenshots/07e-sql-med.png)
 ![Sql high wazuh](screenshots/07f-sql-med.png)
 
-
 ## ✅ Tests et résultats
 
 | Test | Attendu | Résultat |
 |------|---------|----------|
 | SQL Injection détectée | Alerte Suricata + Wazuh | ✅ (via règles custom, 3 niveaux Low/Medium/High) |
 | Brute force détecté | Alerte Suricata + Wazuh | ✅ (via règle custom) |
-| XSS détecté | Alerte Suricata + Wazuh |  ✅ (via règle custom) |
+| XSS détecté | Alerte Suricata + Wazuh | ✅ (via règle custom) |
 | Command Injection détectée | Alerte Suricata + Wazuh | ✅ (via règle custom) |
-| Corrélation complète dans Wazuh | Source, IP attaquante, signature visibles | ⬜ |
+| Corrélation complète dans Wazuh | Source, IP attaquante, signature visibles | ✅ |
 
 ## 🧩 Difficultés rencontrées
 
